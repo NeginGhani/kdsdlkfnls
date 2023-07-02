@@ -1,8 +1,7 @@
 from copy import deepcopy
 import random
-import socket
 import threading
-import tkinter as tk
+import socket
 
 '''character settings'''
 
@@ -11,7 +10,7 @@ class Characters:
 
     def __init__(self, initial_hp: int, initial_magic_amount: int, magic_dmg: int, magic_rate: float,
                  magic_consumption: int, atk_dmg: int, atk_rate: float, magic_recharge: int,
-                 defense_rate: float, name: str):
+                 defense_rate: float, name: str, talent_explained: str):
         self.initial_hp = initial_hp
         self.hp = deepcopy(initial_hp)
         self.initial_magic_amount = initial_magic_amount
@@ -24,6 +23,7 @@ class Characters:
         self.defense_rate = defense_rate
         self.magic_recharge = magic_recharge
         self.name = name
+        self.talent_explained = talent_explained
 
     def dealing_normal_damage(self):
         possible_damages = [0, self.atk_dmg]
@@ -46,253 +46,196 @@ class Characters:
         return defense_result*damage_dealt_by_opponent
 
 
-Geralt = Characters(23000, 400, 900, 0.7, 50, 2200, 0.9, 40, 0.6, "Geralt of Rivia")
-Yennefer = Characters(19500, 1000, 2900, 0.7, 100, 700, 0.3, 60, 0.4, "Yennefer of Vengerberg")
-Ciri = Characters(25000, 300, 400, 0.5, 75, 2900, 80, 40, 0.5, "Cirilla Fiona Elen Riannon")
-Eredin = Characters(36300, 800, 1800, 0.8, 80, 900, 0.4, 60, 0.3, "Eredin Breacc Glas")
+geralt_talent_def = "Loses 30% of total hp\nAll dmg, mgc rate +20%"
+yennefer_talent_def = "Loses 250 mgc energy\nmgc rate, opponent mgc energy:0"
+ciri_talent_def = "Loses 15% hp\nOpponent loses 20% of total hp"
+eredin_talent_def = "def_rate:0, atk dmg -20%\nHeals for 10% of total hp"
+Geralt = Characters(23000, 400, 900, 0.7, 50, 2200, 0.9, 40, 0.6, "Geralt of Rivia", geralt_talent_def)
+Yennefer = Characters(19500, 1000, 2900, 0.7, 100, 700, 0.3, 60, 0.4, "Yennefer of Vengerberg", yennefer_talent_def)
+Ciri = Characters(25000, 300, 400, 0.5, 75, 2900, 80, 40, 0.5, "Cirilla Fiona Elen Riannon", ciri_talent_def)
+Eredin = Characters(36300, 800, 1800, 0.8, 80, 900, 0.4, 60, 0.3, "Eredin Breacc Glas", eredin_talent_def)
 characters_list = [Geralt, Yennefer, Ciri, Eredin]
-my_char: Characters
-opponent_char: Characters
-my_name: str
+
+
+def player_chose_atk(player):
+    return Characters.dealing_normal_damage(player)
+
+
+def player_chose_mgc(player):
+    return Characters.dealing_magic_damage(player)
+
+
+def player_chose_def(player, damage_dealt_by_opponent):
+    Characters.defence(player, damage_dealt_by_opponent)
+
+
+def talent_for_geralt(player: Characters, opponent: Characters):
+    player.hp -= player.initial_hp*0.3
+    player.magic_dmg *= 1.2
+    player.atk_dmg *= 1.2
+    player.magic_rate = 0.9
+
+
+def talent_for_yennefer(player: Characters, opponent: Characters):
+    player.magic_amount -= 250
+    player.magic_rate = 0
+    opponent.magic_amount = 0
+
+
+def talent_for_ciri(player: Characters, opponent: Characters):
+    player.hp *= 0.85
+    opponent.hp -= opponent.initial_hp*0.2
+
+
+def talent_for_eredin(player: Characters, opponent: Characters):
+    player.defense_rate = 0
+    player.atk_dmg *= 0.8
+    player.hp += player.initial_hp*0.1
+
+
+def player_chose_talent(player, opponent):
+    if player.name == "Geralt of Rivia":
+        talent_for_geralt(player, opponent)
+    elif player.name == "Yennefer of Vengerberg":
+        talent_for_yennefer(player, opponent)
+    elif player.name == "Cirilla Fiona Elen Riannon":
+        talent_for_ciri(player, opponent)
+    else:
+        talent_for_eredin(player, opponent)
+
+
+command_list = [player_chose_atk, player_chose_mgc, player_chose_def, player_chose_talent]
 
 '''connection settings'''
 
+host = "127.0.0.1"
 port = 61000
-host = '127.0.0.1'
-client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client_socket.connect((host, port))
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server_socket.bind((host, port))
+server_socket.listen(2)
+
+conn_list = []
+address_list = []
 
 
-def send_data_to_server(data):
-    client_socket.send(bytes(data, 'utf-8'))
+def socket_accept():
+    for i in range(0, 2):
+        conn, address = server_socket.accept()
+        # address[0]: ip   address[1]: port
+        conn_list.append(conn)
+        address_list.append(address)
 
 
-def get_data_from_server():
-    data = client_socket.recv(1024).decode("utf-8")
-    return data
+connection_thread = threading.Thread(target=socket_accept)
+connection_thread.start()
+connection_thread.join()
+print("connection with both clients has been established")
+clients_choice_dic = dict()
+name_and_conn_dic = dict()
+''' pl = {'pl_conn_obj': player_name}    '''
+pl1 = dict()
+pl2 = dict()
+player1_character: Characters
+player2_character: Characters
+pl1_conn_obj = conn_list[0]
+pl2_conn_obj = conn_list[1]
 
 
-'''gui settings'''
-'''login page creation part'''
+'''note for myself: this func waits for both clients to send their data
+then it'll take the next step which means the lines after calling the func'''
 
 
-def create_login_page():
-    def login_btn():
-        global my_name
-        my_name = get_name_entry.get()
-        if len(my_name) == 0:
-            tk.Label(master=result_frame, text="please enter a name", bg="red").place(y=150, x=550)
-        else:
-            login_window.destroy()
-            client_socket.send(bytes(my_name, 'utf-8'))
+def get_data_from_both_clients():
 
-    login_window = tk.Tk()
-    login_window.title("Login page")
-    login_window.geometry('1200x600')
-    result_frame = tk.Frame(height=300, width=1200)
-    result_frame.pack(side=tk.BOTTOM, expand=True)
-    get_name_entry = tk.Entry()
-    get_name_label = tk.Label(text="Welcome!\nplease enter a name to proceed")
-    login_button = tk.Button(text="login", command=login_btn, bg="gray")
-    get_name_label.pack(side=tk.TOP, pady=15)
-    get_name_entry.pack(side=tk.TOP, pady=15)
-    login_button.pack(side=tk.TOP, pady=15)
-    login_window.mainloop()
+    def socket_receive_thread_target(conn):
+        global clients_choice_dic
+        player_choice = conn.recv(1024)
+        clients_choice_dic[str(conn)] = (player_choice.decode('utf-8'))
+
+    receive_thread_list = []
+    for conn in conn_list:
+        receive_thread = threading.Thread(target=socket_receive_thread_target, args=[conn])
+        receive_thread_list.append(receive_thread)
+        receive_thread.start()
+    for receive_thread in receive_thread_list:
+        receive_thread.join()
 
 
-'''menu creation part'''
+def send_data_to_clients(data):
+    for conn in conn_list:
+        conn.send(bytes(data, 'utf-8'))
 
 
-def create_stats(character):
-    stt = ""
-    stt += f'{character.name}\n\n'
-    stt += f'hp: {character.hp}\n'
-    stt += f'atk dmg: {character.atk_dmg}\n'
-    stt += f'atk rate: {character.atk_rate * 100}%\n'
-    stt += f'mgc amount: {character.initial_magic_amount}\n'
-    stt += f'mgc dmg: {character.magic_dmg}\n'
-    stt += f'mgc rate: {character.magic_rate * 100}%\n'
-    stt += f'mgc consumption: {character.magic_consumption}\n'
-    stt += f'mgc recharge: {character.magic_recharge}\n'
-    stt += f'defense rate: {character.defense_rate * 100}%'
-    return stt
+'''each player has a dic {conn_obj: player_name}'''
 
 
-def insert_stats(character, master_frame):
-    tk.Label(master=master_frame, text=f'{create_stats(character)}').place(x=75, y=380)
+def get_name_from_players():
+    global name_and_conn_dic
+    global pl1
+    global pl2
+    global pl1_conn_obj
+    global pl2_conn_obj
+    get_data_from_both_clients()
+    name_and_conn_dic = deepcopy(clients_choice_dic)
+    pl1[str(pl1_conn_obj)] = name_and_conn_dic[str(pl1_conn_obj)]
+    pl2[str(pl1_conn_obj)] = name_and_conn_dic[str(pl1_conn_obj)]
 
 
-def insert_btn(bttn):
-    bttn.place(x=100, y=570)
+def assign_character_to_players():
+    global player1_character
+    global player2_character
+    get_data_from_both_clients()
+    for char in characters_list:
+        if clients_choice_dic[str(conn_list[0])] == char.name:
+            print(clients_choice_dic[str(conn_list[0])])
+            player1_character = deepcopy(char)
+        if clients_choice_dic[str(conn_list[1])] == char.name:
+            print(clients_choice_dic[str(conn_list[1])])
+            player2_character =deepcopy(char)
 
 
-def create_menu_window():
-
-    def choosing_geralt():
-        global my_char
-        client_socket.send(bytes(Geralt.name, 'utf-8'))
-        my_char = deepcopy(Geralt)
-        character_menu_window.destroy()
-
-    def choosing_yennefer():
-        global my_char
-        client_socket.send(bytes(Yennefer.name, 'utf-8'))
-        my_char = deepcopy(Yennefer)
-        character_menu_window.destroy()
-
-    def choosing_ciri():
-        global my_char
-        client_socket.send(bytes(Ciri.name, 'utf-8'))
-        my_char = deepcopy(Ciri)
-        character_menu_window.destroy()
-
-    def choosing_eredin():
-        global my_char
-        client_socket.send(bytes(Eredin.name, 'utf-8'))
-        my_char = deepcopy(Eredin)
-        character_menu_window.destroy()
-
-    character_menu_window = tk.Tk()
-    character_menu_window.title("characters")
-    character_menu_window.geometry('1200x600')
-    geralt_frame = tk.Frame(master=character_menu_window, height=600, width=300, bg="gray")
-    yennefer_frame = tk.Frame(master=character_menu_window, height=600, width=300, bg="#71597d")
-    ciri_frame = tk.Frame(master=character_menu_window, height=600, width=300, bg="#d2d2ee")
-    eredin_frame = tk.Frame(master=character_menu_window, height=600, width=300, bg="#9C7872")
-    geralt_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
-    yennefer_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
-    ciri_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
-    eredin_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
-
-    geralt_pfp = tk.PhotoImage(file="GERALT.png")
-    geralt_pfp.image = geralt_pfp
-    tk.Label(master=geralt_frame, image=geralt_pfp).place(x=50, y=50)
-    yennefer_pfp = tk.PhotoImage(file="YENNEFER.png")
-    yennefer_pfp.image = yennefer_pfp
-    tk.Label(master=yennefer_frame, image=yennefer_pfp).place(x=50, y=50)
-    ciri_pfp = tk.PhotoImage(file="CIRI.png")
-    ciri_pfp.image = ciri_pfp
-    tk.Label(master=ciri_frame, image=ciri_pfp).place(x=50, y=50)
-    eredin_pfp = tk.PhotoImage(file="EREDIN.png")
-    eredin_pfp.image = eredin_pfp
-    tk.Label(master=eredin_frame, image=eredin_pfp).place(x=50, y=50)
-
-    pick_geralt_btn = tk.Button(master=geralt_frame, command=choosing_geralt, text="Geralt")
-    pick_yennefer_btn = tk.Button(master=yennefer_frame, command=choosing_yennefer, text="Yennefer")
-    pick_ciri_btn = tk.Button(master=ciri_frame, command=choosing_ciri, text="Ciri")
-    pick_eredin_btn = tk.Button(master=eredin_frame, command=choosing_eredin, text="Eredin")
-    btn_list = [pick_geralt_btn, pick_yennefer_btn, pick_ciri_btn, pick_eredin_btn]
-    frame_list = [geralt_frame, yennefer_frame, ciri_frame, eredin_frame]
-
-    for btn in btn_list:
-        insert_btn(btn)
-    for i in range(0, 4):
-        insert_stats(characters_list[i], frame_list[i])
-
-    character_menu_window.mainloop()
+def process_data_from_clients():
+    i = int(clients_choice_dic[pl1_conn_obj])
+    j = int(clients_choice_dic[pl2_conn_obj])
+    if i < 3:
+        command_list[i](player2_character)
+    else:
+        command_list[i](player1_character, player2_character)
+    if j < 3:
+        command_list[j](player1_character)
+    else:
+        command_list[j](player2_character, player1_character)
 
 
-def create_loading_window():
-    loading_window = tk.Tk()
-    loading_window.title("waiting for players")
-    loading_window.geometry('1200x600')
-    loading_window.configure(bg='#589e7f')
-    wait_str = "please wait for your opponent to choose their character"
-    waiting_for_opponent_label = tk.Label(master=loading_window, text=wait_str, bg='#589e7f')
-    waiting_for_opponent_label.pack(pady=200)
+def prepare_and_send_data():
 
-    def close_loading_window():
-        global opponent_char
-        opponent_char_index = int(client_socket.recv(1024).decode('utf-8'))
-        opponent_char = deepcopy(characters_list[opponent_char_index])
-        print(opponent_char.name)
-        loading_window.destroy()
-
-    waiting_window_thread = threading.Thread(target=close_loading_window)
-    waiting_window_thread.start()
-    loading_window.mainloop()
+    ee = f'{pl1[pl1_conn_obj]}...{player1_character.hp}...{player1_character.magic_amount}|'
+    oo = f'{pl2[pl2_conn_obj]}...{player2_character.hp}...{player2_character.magic_amount}'
+    data = ee+oo
+    for conn in conn_list:
+        conn.send(bytes(data, 'utf-8'))
 
 
-def normal_atk():
-    client_socket.send(bytes("0", 'utf-8'))
+def get_index_for_clients(opposite_char: Characters):
+    for char in characters_list:
+        if char.name == opposite_char.name:
+            return characters_list.index(char)
 
 
-def magic_atk():
-    client_socket.send(bytes("1", 'utf-8'))
+def main():
+    get_name_from_players()
+    assign_character_to_players()
+    print(f'p1: {player1_character.name}')
+    print(f"p2: {player2_character.name}")
+
+    pl1_conn_obj.send(bytes(str(get_index_for_clients(player2_character)), 'utf-8'))
+    pl2_conn_obj.send(bytes(str(get_index_for_clients(player1_character)), 'utf-8'))
+
+    while player1_character.hp != 0 or player2_character.hp != 0:
+        get_data_from_both_clients()
+        process_data_from_clients()
+        prepare_and_send_data()
 
 
-def defense():
-    client_socket.send(bytes("2", 'utf-8'))
-
-
-def talent():
-    client_socket.send(bytes("3", 'utf-8'))
-
-#arena
-
-
-def create_arena():
-    arena = tk.Tk()
-    arena.title("Fight!")
-    arena.geometry('1200x600')
-    my_frame = tk.Frame(master=arena, height=600, width=600, bg="#587A54")
-    opponent_frame = tk.Frame(master=arena, height=600, width=600, bg="#7A524E")
-    my_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    opponent_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    my_info = tk.Canvas(master=my_frame, height=150, width=600, bg="#6A7A6C")  # canvas for bars
-    opponent_info = tk.Canvas(master=opponent_frame, height=150, width=600, bg="#773449")
-    my_info.pack(side=tk.TOP, fill=tk.X)
-    opponent_info.pack(side=tk.TOP, fill=tk.X)
-
-    btns_frame = tk.Frame(master=my_frame, height=100, width=600, bg="#6A7A6C")
-    atk_btn = tk.Button(master=btns_frame, text="Normal attack")
-    mgc_btn = tk.Button(master=btns_frame, text="Magic attack")
-    defense_btn = tk.Button(master=btns_frame, text="Defense")
-    talent_btn = tk.Button(master=btns_frame, text="Special attack", bg="gold")
-    atk_btn.pack(side=tk.LEFT, pady=30, padx=10)
-    mgc_btn.pack(side=tk.LEFT, pady=30, padx=10)
-    defense_btn.pack(side=tk.LEFT, pady=30, padx=10)
-    talent_btn.pack(side=tk.LEFT, pady=30, padx=10)
-    btns_frame.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def process_battle_data():
-        data = get_data_from_server()
-        split_data: list
-        split_data = data.split("|")
-        split_data[0] = split_data[0].split("...")
-        split_data[1] = split_data[1].split("...")
-        for item in split_data:
-
-            if item[0] == my_name:
-                my_char.hp = item[1]
-                my_char.magic_amount = item[2]
-            else:
-                opponent_char.hp = item[1]
-                opponent_char.magic_amount = item[2]
-
-    def set_bars():
-        list_for_process_bars = [[my_info, my_char], [opponent_info, opponent_char]]
-        for item in list_for_process_bars:
-            hp_scale = (item[1].hp * 370 / item[1].initial_hp) + 210
-            mgc_scale = (item[1].magic_amount * 370 / item[1].initial_magic_amount) + 210
-            '''hp_bar'''
-            item[0].create_rectangle(210, 20, 580, 95, fill="#731F1C")
-            item[0].create_rectangle(210, 20, hp_scale, 95, fill="#1E7A10")
-            '''mgc bar'''
-            item[0].create_rectangle(210, 105, 580, 135, fill="black")
-            item[0].create_rectangle(210, 105, mgc_scale, 135, fill="#E2C276")
-    set_bars()
-
-    def run_battle():
-        while True:
-            process_battle_data()
-            arena.after(0, set_bars)
-
-    run_battle()
-    arena.mainloop()
-
-
-create_login_page()
-create_menu_window()
-create_loading_window()
-create_arena()
+main()
